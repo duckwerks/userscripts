@@ -1,0 +1,740 @@
+// ==UserScript==
+// @name         CyTube Emote Tools
+// @namespace    cytube-emote-tools
+// @version      1.4
+// @description  Persistent emote cache + emote discovery + @username discovery, docked to the chat box
+// @match        https://cytu.be/r/*
+// @run-at       document-end
+// @noframes
+// @grant        none
+// ==/UserScript==
+
+/* cytube-emote-tools-v1.4.user.js
+ *
+ * Works two ways from the same file:
+ *   - Tampermonkey: install it as a userscript (header above is used).
+ *   - CyTube channel JS: $.getScript("<url to this file>");  (header is just comments)
+ * If both load, the second copy exits automatically.
+ *
+ * 1) Emote image cache. Images are kept in memory as blob URLs AND stored in the
+ *    browser's Cache Storage, so they survive page reloads and browser restarts.
+ *    Stored images are refreshed after CFG.maxAgeDays.
+ * 2) Emote discovery panel (see v1.1): closest alphabetical matches, "also
+ *    related" matches, multi-word names, tap to insert.
+ * 3) The panel is docked to the top edge of the chat box. NEW in v1.4: by default it
+ *    lives inside the chat box's own container, so the browser scrolls it with the
+ *    chat box natively (no scroll handlers, no lag). Typing also does less work:
+ *    repeat keyup/input events no longer rebuild the panel.
+ * 4) NEW in v1.3 - @username discovery: type '@' (optionally followed by letters) and
+ *    the panel lists matching users; Tab / Shift+Tab cycles through them and inserts
+ *    '@name '. Tap a name to insert it. Works in the same message as emotes - whichever
+ *    word the cursor is on decides which list shows. Plain-word Tab completion
+ *    (no '@') is left to CyTube's own handler. '@' tokens only: nothing else changes.
+ */
+(function () {
+  'use strict';
+  if (window.__emoteToolsLoaded) return;
+  window.__emoteToolsLoaded = true;
+
+  var CFG = {
+    preloadAll: true,              // background-preload every channel emote
+    startDelayMs: 3000,            // wait before background network preload starts
+    concurrency: 4,                // parallel network downloads
+    maxBytes: 120 * 1024 * 1024,   // in-memory cap (mobile-safe)
+    persist: true,                 // keep images in Cache Storage across reloads
+    maxAgeDays: 14,                // refresh stored images after this long
+    maxDiskBytes: 400 * 1024 * 1024, // stop storing new images past this (site-wide usage)
+    primaryCount: 3,               // "starts with" suggestions
+    secondaryCount: 3,             // "also related" suggestions
+    thumbMax: 56,                  // thumbnail max width/height in px
+    maxQueryLen: 40,               // longest emote name searched for (chars)
+    clickToInsert: true,           // tap a suggestion to insert it
+    dockMode: 'inline',            // 'inline' = inside the chat box container (smoothest scrolling)
+                                   // 'fixed'  = screen-fixed, follows the chat box via scroll events
+                                   // 'float'  = fixed, not flush (old v1.1 look)
+    mentions: true,                // '@' username discovery + Tab cycling
+    mentionCount: 8,               // user chips shown at once
+    includeSelf: false,            // list your own name too
+    debug: false
+  };
+
+  var DISK_NAME = 'cytube-emote-tools-v1';
+  var DAY = 86400000;
+
+  function log() {
+    if (CFG.debug && window.console) console.log.apply(console, ['[emote-tools]'].concat([].slice.call(arguments)));
+  }
+
+  /* ---------- emote lookup ---------- */
+  var byName = new Map();       // lowercase name -> emote
+  var sorted = [];              // emotes sorted alphabetically (numeric-aware)
+  var urlSet = new Set();       // absolute emote image URLs
+  var triggerChars = new Set(); // non-alphanumeric first chars of emote names ('/', ':')
+  var lastArr = null, lastLen = -1;
+  var coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+  function abs(u) {
+    try { return new URL(u, location.href).href; } catch (e) { return ''; }
+  }
+
+  function syncEmotes() {
+    var arr = window.CHANNEL && window.CHANNEL.emotes;
+    if (!arr || (arr === lastArr && arr.length === lastLen)) return;
+    lastArr = arr; lastLen = arr.length;
+    byName.clear(); urlSet.clear(); triggerChars.clear();
+    sorted = [];
+    arr.forEach(function (e) {
+      if (!e || !e.name || !e.image) return;
+      var u = abs(e.image);
+      if (!u) return;
+      e._abs = u;
+      e._lc = String(e.name).toLowerCase();
+      e._words = e._lc.split(/[^a-z0-9]+/).filter(Boolean);
+      byName.set(e._lc, e);
+      urlSet.add(u);
+      sorted.push(e);
+      var c = e._lc.charAt(0);
+      if (!/[a-z0-9]/.test(c)) triggerChars.add(c);
+    });
+    sorted.sort(function (a, b) { return coll.compare(a._lc, b._lc); });
+    log('emotes synced:', byName.size, 'trigger chars:', Array.from(triggerChars).join(''));
+  }
+
+  /* ---------- persistent storage (Cache Storage) ---------- */
+  var diskP = null, diskUsed = 0;
+
+  function diskOK() { return CFG.persist && typeof window.caches !== 'undefined'; }
+
+  function disk() {
+    if (!diskOK()) return Promise.resolve(null);
+    if (!diskP) {
+      diskP = window.caches.open(DISK_NAME).catch(function () { return null; });
+      try {
+        if (navigator.storage && navigator.storage.estimate) {
+          navigator.storage.estimate().then(function (e) { diskUsed = (e && e.usage) || 0; });
+        }
+      } catch (e) {}
+    }
+    return diskP;
+  }
+
+  // Resolves to a Blob if a fresh copy is stored, else null.
+  function diskGet(url) {
+    return disk().then(function (c) {
+      if (!c) return null;
+      return c.match(url).then(function (r) {
+        if (!r) return null;
+        var t = +r.headers.get('x-et-time') || 0;
+        if (!t || Date.now() - t > CFG.maxAgeDays * DAY) return null; // expired: refetch
+        return r.blob();
+      });
+    }).catch(function () { return null; });
+  }
+
+  function diskPut(url, blob) {
+    return disk().then(function (c) {
+      if (!c || diskUsed + blob.size > CFG.maxDiskBytes) return;
+      diskUsed += blob.size;
+      var h = new Headers({
+        'x-et-time': String(Date.now()),
+        'content-type': blob.type || 'application/octet-stream'
+      });
+      return c.put(url, new Response(blob, { headers: h }));
+    }).catch(function () {});
+  }
+
+  // Weekly cleanup: drop stored images not refreshed within 2x maxAgeDays
+  // (e.g. emotes from channels you no longer visit).
+  function prune() {
+    if (!diskOK()) return;
+    var KEY = 'et-last-prune';
+    try {
+      var last = +localStorage.getItem(KEY) || 0;
+      if (Date.now() - last < 7 * DAY) return;
+      localStorage.setItem(KEY, String(Date.now()));
+    } catch (e) { return; }
+    disk().then(function (c) {
+      if (!c) return;
+      return c.keys().then(function (reqs) {
+        var i = 0, removed = 0;
+        (function next() {
+          if (i >= reqs.length) { log('prune removed', removed); return; }
+          var rq = reqs[i++];
+          c.match(rq).then(function (r) {
+            var t = r ? (+r.headers.get('x-et-time') || 0) : 0;
+            if (!t || Date.now() - t > CFG.maxAgeDays * 2 * DAY) { removed++; return c.delete(rq); }
+          }).catch(function () {}).then(next);
+        })();
+      });
+    }).catch(function () {});
+  }
+
+  /* ---------- in-memory image cache ---------- */
+  var cache = new Map();      // url -> {state, objUrl, img, bytes}
+  var queue = [], active = 0, totalBytes = 0;
+  var stat = { fromDisk: 0, fromNet: 0, fallback: 0 };
+
+  function finish(rec, blob, source) {
+    rec.objUrl = URL.createObjectURL(blob);
+    rec.bytes = blob.size;
+    totalBytes += blob.size;
+    rec.state = 'blob';
+    if (source === 'disk') stat.fromDisk++; else stat.fromNet++;
+  }
+
+  function enqueue(url, priority) {
+    if (cache.has(url)) return;
+    cache.set(url, { state: 'queued' });
+    if (priority) queue.unshift(url); else queue.push(url);
+    pump();
+  }
+
+  function pump() {
+    while (active < CFG.concurrency && queue.length) {
+      if (totalBytes >= CFG.maxBytes) { queue.length = 0; log('memory cap reached'); break; }
+      load(queue.shift());
+    }
+  }
+
+  function load(url) {
+    var rec = cache.get(url);
+    rec.state = 'loading';
+    active++;
+    diskGet(url)
+      .then(function (b) {
+        if (b) return { b: b, src: 'disk' };
+        return fetch(url, { mode: 'cors', credentials: 'omit' })
+          .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
+          .then(function (b2) { diskPut(url, b2); return { b: b2, src: 'net' }; });
+      })
+      .then(function (x) { finish(rec, x.b, x.src); })
+      .catch(function () {
+        // CORS blocked or failed: fall back to holding an Image in memory
+        var im = new Image();
+        im.src = url;
+        rec.img = im;
+        rec.state = 'img';
+        stat.fallback++;
+      })
+      .then(function () { active--; pump(); });
+  }
+
+  // Fast startup: pull everything already stored on disk into memory, no network.
+  function hydrate() {
+    if (!diskOK()) return;
+    var list = sorted.slice(), idx = 0;
+    function next() {
+      while (idx < list.length && cache.has(list[idx]._abs)) idx++;
+      if (idx >= list.length) return Promise.resolve();
+      if (totalBytes >= CFG.maxBytes) return Promise.resolve();
+      var url = list[idx++]._abs;
+      var rec = { state: 'loading' };
+      cache.set(url, rec);
+      return diskGet(url).then(function (b) {
+        if (b) finish(rec, b, 'disk'); else cache.delete(url); // miss: leave for network preload
+      }).then(next);
+    }
+    for (var k = 0; k < 6; k++) next();
+  }
+
+  function srcFor(emote) {
+    var rec = cache.get(emote._abs);
+    if (rec && rec.state === 'blob') return rec.objUrl;
+    enqueue(emote._abs, true);
+    return emote._abs;
+  }
+
+  /* swap emote <img> elements to cached blob URLs as they appear in the DOM */
+  function handleImg(img) {
+    var src = img.src;
+    if (!src || src.indexOf('blob:') === 0 || !urlSet.has(src)) return;
+    var rec = cache.get(src);
+    if (rec && rec.state === 'blob') img.src = rec.objUrl;
+    else if (!rec) enqueue(src, true);
+  }
+
+  function startObserver() {
+    new MutationObserver(function (muts) {
+      syncEmotes();
+      muts.forEach(function (m) {
+        if (m.type === 'attributes') {
+          if (m.target.tagName === 'IMG') handleImg(m.target);
+          return;
+        }
+        m.addedNodes.forEach(function (n) {
+          if (n.nodeType !== 1) return;
+          if (n.tagName === 'IMG') handleImg(n);
+          else if (n.querySelectorAll) n.querySelectorAll('img').forEach(handleImg);
+        });
+      });
+    }).observe(document.body, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['src']
+    });
+  }
+
+  function startPreload() {
+    setTimeout(function () {
+      syncEmotes();
+      if (CFG.preloadAll) {
+        sorted.forEach(function (e) { enqueue(e._abs, false); });
+        log('network preload queued:', queue.length);
+      }
+      setTimeout(prune, 15000);
+    }, CFG.startDelayMs);
+  }
+
+  /* ---------- discovery search ---------- */
+  // Returns {primary:[...], secondary:[...], exact} for query q (already lowercase).
+  function search(q) {
+    var exact = byName.get(q) || null;
+    var t1 = exact ? [exact] : [];
+    var t2 = [], t3 = [];
+    var body = q.replace(/^[^a-z0-9]+/, '');   // '/l' -> 'l'
+    var allowT2 = body.length >= 1;
+    var allowT3 = body.length >= 2;
+
+    for (var i = 0; i < sorted.length; i++) {
+      var e = sorted[i];
+      if (e === exact) continue;
+      if (e._lc.indexOf(q) === 0) {
+        if (t1.length < CFG.primaryCount) t1.push(e);
+      } else if (allowT2 && t2.length < CFG.secondaryCount &&
+                 e._words.some(function (w) { return w.indexOf(body) === 0; })) {
+        t2.push(e);
+      } else if (allowT3 && t3.length < CFG.secondaryCount && e._lc.indexOf(body) !== -1) {
+        t3.push(e);
+      }
+      if (t1.length >= CFG.primaryCount && t2.length >= CFG.secondaryCount &&
+          t3.length >= CFG.secondaryCount) break;
+    }
+    return {
+      primary: t1,
+      secondary: t2.concat(t3).slice(0, CFG.secondaryCount),
+      exact: exact
+    };
+  }
+
+  function searchTrim(q) {
+    q = q.toLowerCase();
+    var r = search(q);
+    if (!r.primary.length && !r.secondary.length && /\s$/.test(q)) {
+      r = search(q.replace(/\s+$/, ''));
+    }
+    return r;
+  }
+
+  // Find where the emote being typed starts (supports multi-word names).
+  function findQuery(before, afterTab) {
+    if (afterTab) before = before.replace(/\s$/, ''); // Tab completion may leave a trailing space
+    var len = before.length;
+    var lo = Math.max(0, len - CFG.maxQueryLen);
+    var useTrigger = triggerChars.size > 0;
+    var starts = [];
+    for (var i = lo; i < len; i++) {
+      if (i > 0 && !/\s/.test(before.charAt(i - 1))) continue;   // must begin a word
+      var ch = before.charAt(i);
+      if (/\s/.test(ch)) continue;
+      if (useTrigger ? triggerChars.has(ch) : true) starts.push(i);
+    }
+    if (!starts.length) return null;
+
+    // Pass 1: longest suffix that has "starts with" matches (handles '/lol c')
+    for (var s = 0; s < starts.length; s++) {
+      var q = before.slice(starts[s]);
+      if (!useTrigger && q.replace(/\s+$/, '').length < 2) continue;
+      var r = searchTrim(q);
+      if (r.primary.length) return { start: starts[s], res: r };
+    }
+    // Pass 2: just the last word start; may give "also related" results only
+    var last = starts[starts.length - 1];
+    var q2 = before.slice(last);
+    if (!useTrigger && q2.replace(/\s+$/, '').length < 2) return null;
+    var r2 = searchTrim(q2);
+    if (r2.secondary.length) return { start: last, res: r2 };
+    return null;
+  }
+
+  /* ---------- user list (for @mentions) ---------- */
+  function getUsers() {
+    var out = [], seen = new Set();
+    var el = document.getElementById('userlist');
+    if (!el) return out;
+    var me = ((window.CLIENT && window.CLIENT.name) || '').toLowerCase();
+    for (var i = 0; i < el.children.length; i++) {
+      var item = el.children[i];
+      var tag = item.children[1];            // same element CyTube's own Tab completion reads
+      if (!tag) continue;
+      var n = tag.textContent;
+      if (!n) continue;
+      var lc = n.toLowerCase();
+      if (seen.has(lc)) continue;
+      if (!CFG.includeSelf && lc === me) continue;
+      seen.add(lc);
+      out.push({ name: n, _lc: lc, afk: item.classList.contains('userlist_afk') });
+    }
+    out.sort(function (a, b) { return coll.compare(a._lc, b._lc); });
+    return out;
+  }
+
+  // Users whose name starts with prefix first, then ones that merely contain it.
+  function matchUsers(prefix) {
+    var p = prefix.toLowerCase(), starts = [], contains = [];
+    getUsers().forEach(function (u) {
+      if (u._lc.indexOf(p) === 0) starts.push(u);
+      else if (p && u._lc.indexOf(p) !== -1) contains.push(u);
+    });
+    return { list: starts.concat(contains), startsCount: starts.length };
+  }
+
+  // '@' must begin a word, so 'me@site' is not a mention. start = index of the '@'.
+  function mentionToken(before) {
+    var m = before.match(/(^|\s)@([^\s@]*)$/);
+    return m ? { start: before.length - m[2].length - 1, prefix: m[2] } : null;
+  }
+
+  // If an emote name itself starts with '@', leave '@' to the emote panel.
+  function mentionsOn() { return CFG.mentions && !triggerChars.has('@'); }
+
+  /* ---------- panel UI (shared by emotes and users) ---------- */
+  var box, chat, tabFlag = false, shown = false, raf = 0, lastSig = '', lastKey = '';
+  var ctx = { start: 0 };   // where the word being completed starts
+  var mctx = null;          // active @mention Tab cycle: {start,end,list,idx,startsCount}
+
+  function buildBox() {
+    var css = document.createElement('style');
+    css.textContent =
+      '#emote-tab-preview{position:fixed;z-index:2000;display:none;' +
+      'background:rgba(20,20,20,.95);color:#eee;border:1px solid #555;border-radius:6px;' +
+      'padding:4px 6px;font:12px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.5);' +
+      'max-width:calc(100vw - 8px);box-sizing:border-box;-webkit-user-select:none;user-select:none}' +
+      '#emote-tab-preview.et-inline{position:absolute}' +
+      '#emote-tab-preview.et-docked{border-radius:6px 6px 0 0;border-bottom:none;max-width:none;' +
+      'max-height:min(45vh,320px);overflow-y:auto;box-shadow:0 -2px 8px rgba(0,0,0,.4)}' +
+      '#emote-tab-preview .et-row{display:flex;flex-wrap:wrap;gap:4px}' +
+      '#emote-tab-preview .et-label{font-size:10px;opacity:.65;margin:4px 0 2px;border-top:1px solid #444;padding-top:3px}' +
+      '#emote-tab-preview .et-title{font-size:10px;opacity:.65;margin:0 0 3px}' +
+      '#emote-tab-preview .et-cell{width:78px;padding:3px;text-align:center;border:1px solid transparent;border-radius:4px;' +
+      (CFG.clickToInsert ? 'cursor:pointer;' : '') + '}' +
+      '#emote-tab-preview .et-cell.et-exact{border-color:#8ab}' +
+      '#emote-tab-preview .et-cell img{display:block;margin:0 auto 2px;max-width:' + CFG.thumbMax +
+      'px;max-height:' + CFG.thumbMax + 'px}' +
+      '#emote-tab-preview .et-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '#emote-tab-preview .et-chip{padding:4px 9px;border:1px solid #555;border-radius:12px;font-size:12px;' +
+      (CFG.clickToInsert ? 'cursor:pointer;' : '') + '}' +
+      '#emote-tab-preview .et-chip.et-exact{border-color:#8ab;background:rgba(136,170,187,.25)}' +
+      '#emote-tab-preview .et-chip.et-afk{opacity:.55}';
+    document.head.appendChild(css);
+    box = document.createElement('div');
+    box.id = 'emote-tab-preview';
+    document.body.appendChild(box);
+
+    // keep focus (and the soft keyboard) in the chat box when tapping the panel
+    box.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+    if (CFG.clickToInsert) {
+      box.addEventListener('click', function (ev) {
+        var el = ev.target.closest ? ev.target.closest('[data-name]') : null;
+        if (el) insertWord(el.getAttribute('data-name'), el.getAttribute('data-kind'));
+      });
+    }
+  }
+
+  function cell(emote, isExact) {
+    var d = document.createElement('div');
+    d.className = 'et-cell' + (isExact ? ' et-exact' : '');
+    d.setAttribute('data-name', emote.name);
+    d.setAttribute('data-kind', 'emote');
+    d.title = emote.name;
+    var im = document.createElement('img');
+    im.src = srcFor(emote);
+    im.alt = emote.name;
+    im.decoding = 'async';
+    var n = document.createElement('div');
+    n.className = 'et-name';
+    n.textContent = emote.name;
+    d.appendChild(im);
+    d.appendChild(n);
+    return d;
+  }
+
+  function row(list, exact) {
+    var r = document.createElement('div');
+    r.className = 'et-row';
+    list.forEach(function (e) { r.appendChild(cell(e, e === exact)); });
+    return r;
+  }
+
+  function names(list) { return list.map(function (e) { return e.name; }).join('\u0001'); }
+
+  function renderEmotes(res) {
+    var sig = 'e|' + names(res.primary) + '|' + names(res.secondary) + '|' + (res.exact ? res.exact.name : '');
+    if (sig === lastSig) return;
+    lastSig = sig;
+    box.textContent = '';
+    if (res.primary.length) box.appendChild(row(res.primary, res.exact));
+    if (res.secondary.length) {
+      if (res.primary.length) {
+        var lab = document.createElement('div');
+        lab.className = 'et-label';
+        lab.textContent = 'Also related';
+        box.appendChild(lab);
+      }
+      box.appendChild(row(res.secondary, null));
+    }
+  }
+
+  // sel = index of the highlighted user in list (-1 = none)
+  function renderUsers(list, sel) {
+    var n = list.length, max = Math.max(1, CFG.mentionCount), from = 0;
+    if (n > max) from = Math.min(Math.max(0, (sel < 0 ? 0 : sel) - Math.floor(max / 2)), n - max);
+    var sig = 'u|' + names(list.slice(from, from + max)) + '|' + sel + '|' + n;
+    if (sig === lastSig) return;
+    lastSig = sig;
+    box.textContent = '';
+    var title = document.createElement('div');
+    title.className = 'et-title';
+    title.textContent = 'Users' + (n > max ? ' (' + (sel >= 0 ? (sel + 1) + ' of ' : '') + n + ')' : '');
+    box.appendChild(title);
+    var r = document.createElement('div');
+    r.className = 'et-row';
+    list.slice(from, from + max).forEach(function (u, i) {
+      var c = document.createElement('div');
+      c.className = 'et-chip' + (from + i === sel ? ' et-exact' : '') + (u.afk ? ' et-afk' : '');
+      c.setAttribute('data-name', u.name);
+      c.setAttribute('data-kind', 'user');
+      c.textContent = '@' + u.name;
+      r.appendChild(c);
+    });
+    box.appendChild(r);
+  }
+
+  /* docking: sit flush on the top edge of the chat box */
+  function toBody() {
+    if (box.parentNode !== document.body) document.body.appendChild(box);
+    box.classList.remove('et-inline');
+  }
+
+  // Put the panel inside the chat box's own container (the <form> on stock CyTube) so
+  // the browser moves it together with the chat box when the page scrolls.
+  function toInline() {
+    var parent = chat.parentNode;
+    if (!parent || parent === document.body || parent === document.documentElement) return null;
+    if (box.parentNode !== parent) {
+      if (window.getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+      parent.appendChild(box);
+    }
+    box.classList.add('et-inline');
+    return parent;
+  }
+
+  function position() {
+    if (!shown) return;
+    var mode = CFG.dockMode;
+    var parent = mode === 'inline' ? toInline() : null;
+    if (mode === 'inline' && !parent) mode = 'fixed';       // odd page layout: fall back
+    if (mode !== 'inline') toBody();
+
+    if (mode === 'inline') {
+      if (chat.offsetWidth === 0) { box.style.display = 'none'; return; }
+      box.classList.add('et-docked');
+      box.style.left = chat.offsetLeft + 'px';
+      box.style.width = chat.offsetWidth + 'px';
+      box.style.bottom = (parent.clientHeight - chat.offsetTop) + 'px';
+      box.style.display = 'block';
+      return;
+    }
+
+    var r = chat.getBoundingClientRect();
+    var vh = document.documentElement.clientHeight || window.innerHeight;
+    if (r.width === 0 || r.bottom < 0 || r.top > vh) { box.style.display = 'none'; return; }
+    if (mode === 'fixed') {
+      box.classList.add('et-docked');
+      box.style.left = r.left + 'px';
+      box.style.width = r.width + 'px';
+      box.style.bottom = (vh - r.top) + 'px';
+    } else {
+      box.classList.remove('et-docked');
+      box.style.left = Math.max(4, r.left) + 'px';
+      box.style.width = '';
+      box.style.bottom = (vh - r.top + 6) + 'px';
+    }
+    box.style.display = 'block';
+  }
+
+  function schedule() {
+    if (!shown || raf) return;
+    raf = requestAnimationFrame(function () { raf = 0; position(); });
+  }
+
+  function onScroll() { if (CFG.dockMode !== 'inline') schedule(); }   // inline needs no scroll work
+
+  function dock() { shown = true; position(); }
+  function hide() { shown = false; lastSig = ''; lastKey = ''; box.style.display = 'none'; }
+
+  function insertWord(name, kind) {
+    var pos = chat.selectionStart;
+    if (pos == null) pos = chat.value.length;
+    var v = chat.value;
+    var ins = (kind === 'user' ? '@' + name : name) + ' ';
+    chat.value = v.slice(0, ctx.start) + ins + v.slice(pos);
+    var caret = ctx.start + ins.length;
+    chat.focus();
+    try { chat.setSelectionRange(caret, caret); } catch (e) {}
+    mctx = null;
+    hide();
+  }
+
+  /* @mention Tab cycling. Returns true if it handled the Tab press. */
+  function mentionCycleValid(pos) {
+    return mctx && pos === mctx.end &&
+           chat.value.slice(mctx.start, mctx.end) === '@' + mctx.list[mctx.idx].name + ' ';
+  }
+
+  function mentionTab(back) {
+    var pos = chat.selectionStart;
+    if (pos == null) pos = chat.value.length;
+    var start, end;
+    if (mentionCycleValid(pos)) {
+      start = mctx.start; end = mctx.end;
+      var n = mctx.list.length;
+      mctx.idx = (mctx.idx + (back ? -1 : 1) + n) % n;
+    } else {
+      var mt = mentionToken(chat.value.slice(0, pos));
+      if (!mt) return false;
+      var r = matchUsers(mt.prefix);
+      if (!r.list.length) return false;
+      start = mt.start; end = pos;
+      mctx = { start: start, list: r.list, startsCount: r.startsCount, idx: back ? r.list.length - 1 : 0 };
+    }
+    var ins = '@' + mctx.list[mctx.idx].name + ' ';
+    chat.value = chat.value.slice(0, start) + ins + chat.value.slice(end);
+    mctx.end = start + ins.length;
+    try { chat.setSelectionRange(mctx.end, mctx.end); } catch (e) {}
+    return true;
+  }
+
+  function update(afterTab) {
+    syncEmotes();
+    var pos = chat.selectionStart;
+    if (pos == null) pos = chat.value.length;
+    var ul = document.getElementById('userlist');
+    var key = chat.value + '\u0000' + pos + (afterTab ? 't' : '') + '|' + byName.size + '|' + (ul ? ul.children.length : 0);
+    if (shown && key === lastKey) { position(); return; }
+    lastKey = key;
+
+    if (mentionsOn()) {
+      // (a) mid Tab-cycle: keep showing the same user list, highlight the current one
+      if (mentionCycleValid(pos)) {
+        ctx.start = mctx.start;
+        renderUsers(mctx.list, mctx.idx);
+        dock();
+        return;
+      }
+      mctx = null;
+      // (b) typing '@...' : live suggestions
+      var mt = mentionToken(chat.value.slice(0, pos));
+      if (mt) {
+        var r = matchUsers(mt.prefix);
+        if (!r.list.length) { hide(); return; }
+        var exact = -1, p = mt.prefix.toLowerCase();
+        r.list.forEach(function (u, i) { if (u._lc === p) exact = i; });
+        ctx.start = mt.start;
+        renderUsers(r.list, exact);
+        dock();
+        return;
+      }
+    }
+
+    // (c) emotes
+    var hit = findQuery(chat.value.slice(0, pos), afterTab);
+    if (!hit) { hide(); return; }
+    ctx.start = hit.start;
+    renderEmotes(hit.res);
+    dock();
+  }
+
+  function bindChat() {
+    // Capture phase on document runs BEFORE CyTube's own Tab handler on #chatline,
+    // so we can take over Tab only for '@' words and leave everything else alone.
+    document.addEventListener('keydown', function (ev) {
+      if (ev.target !== chat || !(ev.key === 'Tab' || ev.keyCode === 9)) return;
+      if (!mentionsOn() || ev.ctrlKey || ev.altKey || ev.metaKey) return;
+      if (mentionTab(ev.shiftKey)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.stopImmediatePropagation();
+        tabFlag = true;   // so the matching keyup refreshes the panel
+      }
+    }, true);
+
+    chat.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Tab' || ev.keyCode === 9) { tabFlag = true; return; }
+      if (ev.key === 'Enter' || ev.keyCode === 13 || ev.key === 'Escape') { mctx = null; hide(); return; }
+      if (ev.key !== 'Shift' && ev.key !== 'Control' && ev.key !== 'Alt' && ev.key !== 'Meta') mctx = null;
+    });
+    chat.addEventListener('keyup', function (ev) {
+      if (ev.key === 'Enter' || ev.key === 'Escape') return;
+      var t = tabFlag; tabFlag = false;
+      setTimeout(function () { update(t); }, 0);
+    });
+    chat.addEventListener('input', function () { mctx = null; update(false); });
+    chat.addEventListener('click', function () { update(false); });
+    chat.addEventListener('blur', function () { tabFlag = false; setTimeout(hide, 250); });
+
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('resize', schedule);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', schedule);
+      window.visualViewport.addEventListener('scroll', schedule);
+    }
+  }
+
+  /* ---------- boot ---------- */
+  var tries = 0;
+  var iv = setInterval(function () {
+    tries++;
+    chat = document.getElementById('chatline');
+    if (window.CHANNEL && window.CHANNEL.emotes && chat && document.body) {
+      clearInterval(iv);
+      syncEmotes();
+      buildBox();
+      bindChat();
+      startObserver();
+      hydrate();
+      startPreload();
+      log('ready');
+    } else if (tries > 120) {
+      clearInterval(iv);
+      log('gave up waiting for CHANNEL/#chatline');
+    }
+  }, 500);
+
+  /* console helpers: EmoteTools.stats() / .find('/l') / .users('bo') / .clearDisk() */
+  window.EmoteTools = {
+    cfg: CFG,
+    stats: function () {
+      var blobs = 0, imgs = 0;
+      cache.forEach(function (r) { if (r.state === 'blob') blobs++; else if (r.state === 'img') imgs++; });
+      return {
+        emotes: byName.size, inMemory: blobs, fallbackImgOnly: imgs,
+        loadedFromDisk: stat.fromDisk, loadedFromNetwork: stat.fromNet,
+        queued: queue.length, active: active,
+        memoryMB: +(totalBytes / 1048576).toFixed(1),
+        persistent: diskOK()
+      };
+    },
+    find: function (q) {
+      syncEmotes();
+      var r = searchTrim(q);
+      return { primary: r.primary.map(function (e) { return e.name; }),
+               secondary: r.secondary.map(function (e) { return e.name; }) };
+    },
+    users: function (prefix) {
+      var r = matchUsers(prefix || '');
+      return r.list.map(function (u) { return u.name; });
+    },
+    clearDisk: function () {
+      return diskOK() ? window.caches.delete(DISK_NAME).then(function (ok) { diskP = null; diskUsed = 0; return ok; })
+                      : Promise.resolve(false);
+    }
+  };
+})();
