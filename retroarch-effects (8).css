@@ -1,0 +1,230 @@
+
+@font-face {
+  font-family: "NiseSega";
+  src: url("https://cdn.jsdelivr.net/gh/duckwerks/userscripts@main/fonts/NiseSega.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+/* RetroArch effects CSS — pairs with mediaempire-enhance v0.1.8 */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Russo+One&display=swap');
+
+/* Rainbow mask — strong saturation so near-B&W images still shift */
+@keyframes mee-hue {
+  0%   { filter: hue-rotate(0deg) saturate(3) contrast(1.15) brightness(1.05); }
+  100% { filter: hue-rotate(360deg) saturate(3) contrast(1.15) brightness(1.05); }
+}
+img.hued, .hued, .dankestMeme img {
+  animation: mee-hue 0.55s linear infinite !important;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+@keyframes mee-shake {
+  0%   { transform: translate(2px, 1px) rotate(0deg); }
+  10%  { transform: translate(-1px, -2px) rotate(-1deg); }
+  20%  { transform: translate(-3px, 0) rotate(1deg); }
+  30%  { transform: translate(0, 2px) rotate(0); }
+  40%  { transform: translate(1px, -1px) rotate(1deg); }
+  50%  { transform: translate(-1px, 2px) rotate(-1deg); }
+  60%  { transform: translate(-3px, 1px) rotate(0); }
+  70%  { transform: translate(2px, 1px) rotate(-1deg); }
+  80%  { transform: translate(-1px, -1px) rotate(1deg); }
+  90%  { transform: translate(2px, 2px) rotate(0); }
+  100% { transform: translate(1px, -2px) rotate(-1deg); }
+}
+.image-shake {
+  display: inline-block;
+  animation: mee-shake 0.8s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+.image-blur { transition: filter 1s; filter: blur(5px); }
+.image-blur:hover { filter: blur(0); }
+.tilt-f { display: inline-block; transform: rotate(-45deg); }
+.tilt-r { display: inline-block; transform: rotate(45deg); }
+.mirror-x { display: inline-block; transform: scaleX(-1); }
+.mirror-y { display: inline-block; transform: scaleY(-1); }
+.noir { filter: grayscale(100%); }
+
+@keyframes mee-owl { to { transform: rotate(360deg); } }
+.rotate_owl { display: inline-block; animation: mee-owl 1.2s linear infinite; }
+
+/* Continuous one-direction run across chat width (not ping-pong) */
+/* v8: translateX(%) is relative to the element's OWN width, so small images/text only
+   moved a few px. 100cqw = width of the nearest size container (the wrapper below). */
+@keyframes mee-run-right {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100cqw); }
+}
+@keyframes mee-run-left {
+  0%   { transform: translateX(100cqw); }
+  100% { transform: translateX(-100%); }
+}
+@supports not (width: 1cqw) {
+  @keyframes mee-run-right {
+    0%   { transform: translateX(-120%); }
+    100% { transform: translateX(120%); }
+  }
+  @keyframes mee-run-left {
+    0%   { transform: translateX(120%); }
+    100% { transform: translateX(-120%); }
+  }
+}
+span.slide-right, span.slide-left {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  container-type: inline-size;
+}
+span.slide-right > img, img.slide-right {
+  display: inline-block;
+  animation: mee-run-right 6s linear infinite;
+  vertical-align: middle;
+}
+span.slide-left > img, img.slide-left {
+  display: inline-block;
+  animation: mee-run-left 6s linear infinite;
+  vertical-align: middle;
+}
+@keyframes mee-run-up {
+  0%   { transform: translateY(80%); }
+  100% { transform: translateY(-80%); }
+}
+@keyframes mee-run-down {
+  0%   { transform: translateY(-80%); }
+  100% { transform: translateY(80%); }
+}
+img.slide-up { display: inline-block; animation: mee-run-up 4s linear infinite; }
+img.slide-down { display: inline-block; animation: mee-run-down 4s linear infinite; }
+
+/* Peek: top band bobs up then hides down */
+@keyframes mee-peek {
+  0%, 100% { transform: translateY(55%); }
+  40%, 60% { transform: translateY(10%); }
+}
+.peek_up {
+  display: inline-block;
+  max-width: 200px;
+  max-height: 100px !important;
+  overflow: hidden;
+  object-fit: cover;
+  object-position: top;
+  vertical-align: middle;
+  animation: mee-peek 2.2s ease-in-out infinite;
+}
+
+/* /sr /sl marquee — full messagebuffer width */
+#messagebuffer .mee-scroll-right,
+#messagebuffer .mee-scroll-right-fast,
+#messagebuffer .mee-scroll-right-hyper,
+#messagebuffer .mee-scroll-left,
+#messagebuffer .mee-scroll-left-fast,
+#messagebuffer .mee-scroll-left-hyper {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  container-type: inline-size;
+}
+@keyframes mee-marquee-right {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100cqw); }
+}
+@keyframes mee-marquee-left {
+  0%   { transform: translateX(100cqw); }
+  100% { transform: translateX(-100%); }
+}
+@supports not (width: 1cqw) {
+  @keyframes mee-marquee-right {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  @keyframes mee-marquee-left {
+    0%   { transform: translateX(100%); }
+    100% { transform: translateX(-100%); }
+  }
+}
+#messagebuffer .mee-scroll-right .mee-scroll-inner,
+#messagebuffer .mee-scroll-right-fast .mee-scroll-inner,
+#messagebuffer .mee-scroll-right-hyper .mee-scroll-inner {
+  display: inline-block;
+  animation: mee-marquee-right 8s linear infinite;
+  vertical-align: middle;
+}
+#messagebuffer .mee-scroll-right-fast .mee-scroll-inner { animation-duration: 4s; }
+#messagebuffer .mee-scroll-right-hyper .mee-scroll-inner { animation-duration: 1.5s; }
+#messagebuffer .mee-scroll-left .mee-scroll-inner,
+#messagebuffer .mee-scroll-left-fast .mee-scroll-inner,
+#messagebuffer .mee-scroll-left-hyper .mee-scroll-inner {
+  display: inline-block;
+  animation: mee-marquee-left 8s linear infinite;
+  vertical-align: middle;
+}
+#messagebuffer .mee-scroll-left-fast .mee-scroll-inner { animation-duration: 4s; }
+#messagebuffer .mee-scroll-left-hyper .mee-scroll-inner { animation-duration: 1.5s; }
+
+.dankestMeme {
+  font-weight: 700;
+  animation: mee-rainbow 0.3s alternate infinite;
+}
+@keyframes mee-rainbow {
+  0%   { color: #009; }
+  25%  { color: #090; }
+  50%  { color: #F60; }
+  75%  { color: #906; }
+  100% { color: #009; }
+}
+
+/* /in — Nintendo pill / race-stripe capsule */
+.hig-nintendo {
+  display: inline-block;
+  font-family: "Press Start 2P", monospace !important;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #fff !important;
+  background: #e60012;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px #e60012, 2px 2px 0 #000;
+}
+
+/* /sega — real NiseSega face (channel cut is in the glyphs) */
+.sega-font {
+  display: inline-block;
+  font-family: "NiseSega", "Russo One", Impact, sans-serif !important;
+  font-size: 1.5em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.15;
+  color: #1a8cff !important;
+  background: none;
+  -webkit-text-fill-color: unset;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  filter: none;
+  text-shadow:
+    0 1px 0 #001a44,
+    0 0 6px rgba(0, 140, 255, 0.35);
+}
+
+.spoiler { background: #000; color: #000; cursor: pointer; }
+.spoiler:hover { color: inherit; }
+.highlight-hooves { background: #620; color: #ffa; font-weight: 700; padding: 0 4px; }
+.highlight-plot   { background: #406; color: #fdf; font-weight: 700; padding: 0 4px; }
+.speakith { color: #f44; font-size: 1.25em; font-weight: 700; }
+
+.channel-image, img.channel-emote {
+  vertical-align: middle;
+  max-height: 200px;
+  max-width: 100%;
+}
+img.mee-pic { max-height: 80px !important; max-width: 120px !important; }
+img.mee-mid { max-height: 160px !important; max-width: 240px !important; }
+img.mee-big { max-height: 280px !important; max-width: 400px !important; }
+img.mee-ant { max-height: 24px !important; max-width: 40px !important; }
+img.mee-yuge { max-height: 480px !important; max-width: 100% !important; }
