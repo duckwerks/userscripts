@@ -1,0 +1,276 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Russo+One&family=Creepster&display=swap');
+
+
+@font-face {
+  font-family: "NiseSega";
+  src: url("https://cdn.jsdelivr.net/gh/duckwerks/userscripts@main/fonts/NiseSega.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+/* RetroArch effects CSS — pairs with mediaempire-enhance v0.2.2 */
+
+
+/* Rainbow mask — strong saturation so near-B&W images still shift */
+@keyframes mee-hue {
+  0%   { filter: hue-rotate(0deg) saturate(3) contrast(1.15) brightness(1.05); }
+  100% { filter: hue-rotate(360deg) saturate(3) contrast(1.15) brightness(1.05); }
+}
+img.hued, .hued, .dankestMeme img {
+  animation: mee-hue 0.55s linear infinite !important;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+@keyframes mee-shake {
+  0%   { transform: translate(2px, 1px) rotate(0deg); }
+  10%  { transform: translate(-1px, -2px) rotate(-1deg); }
+  20%  { transform: translate(-3px, 0) rotate(1deg); }
+  30%  { transform: translate(0, 2px) rotate(0); }
+  40%  { transform: translate(1px, -1px) rotate(1deg); }
+  50%  { transform: translate(-1px, 2px) rotate(-1deg); }
+  60%  { transform: translate(-3px, 1px) rotate(0); }
+  70%  { transform: translate(2px, 1px) rotate(-1deg); }
+  80%  { transform: translate(-1px, -1px) rotate(1deg); }
+  90%  { transform: translate(2px, 2px) rotate(0); }
+  100% { transform: translate(1px, -2px) rotate(-1deg); }
+}
+.image-shake {
+  display: inline-block;
+  animation: mee-shake 0.8s linear infinite;
+  transform-origin: 50% 50%;
+}
+
+.image-blur { transition: filter 1s; filter: blur(5px); }
+.image-blur:hover { filter: blur(0); }
+.tilt-f { display: inline-block; transform: rotate(-45deg); }
+.tilt-r { display: inline-block; transform: rotate(45deg); }
+.mirror-x { display: inline-block; transform: scaleX(-1); }
+.mirror-y { display: inline-block; transform: scaleY(-1); }
+.noir { filter: grayscale(100%); }
+
+@keyframes mee-owl { to { transform: rotate(360deg); } }
+.rotate_owl { display: inline-block; animation: mee-owl 1.2s linear infinite; }
+
+/* Continuous one-direction run across chat width (not ping-pong) */
+/* v8: translateX(%) is relative to the element's OWN width, so small images/text only
+   moved a few px. 100cqw = width of the nearest size container (the wrapper below). */
+@keyframes mee-run-right {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100cqw); }
+}
+@keyframes mee-run-left {
+  0%   { transform: translateX(100cqw); }
+  100% { transform: translateX(-100%); }
+}
+@supports not (width: 1cqw) {
+  @keyframes mee-run-right {
+    0%   { transform: translateX(-120%); }
+    100% { transform: translateX(120%); }
+  }
+  @keyframes mee-run-left {
+    0%   { transform: translateX(120%); }
+    100% { transform: translateX(-120%); }
+  }
+}
+span.slide-right, span.slide-left {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  container-type: inline-size;
+}
+span.slide-right > img, img.slide-right {
+  display: inline-block;
+  animation: mee-run-right 6s linear infinite;
+  vertical-align: middle;
+}
+span.slide-left > img, img.slide-left {
+  display: inline-block;
+  animation: mee-run-left 6s linear infinite;
+  vertical-align: middle;
+}
+/* v9: .up/.dw/.peek images sit in an image-sized clip box (span.mee-clip, added by the script),
+   so they rise/fall through their own message row and are hidden at its edge. */
+@keyframes mee-rise {
+  0%   { transform: translateY(100%); }
+  100% { transform: translateY(-100%); }
+}
+@keyframes mee-fall {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+span.mee-clip { display: inline-block; overflow: hidden; vertical-align: middle; line-height: 0; max-width: 100%; }
+span.mee-clip > img { vertical-align: top; }
+span.mee-clip > img.slide-up   { animation: mee-rise 4s linear infinite; }
+span.mee-clip > img.slide-down { animation: mee-fall 4s linear infinite; }
+
+/* Peek (v9): image keeps its normal size; pops up from the bottom of its clip box, then hides again */
+@keyframes mee-peek-v2 {
+  0%, 100% { transform: translateY(100%); }
+  35%, 65% { transform: translateY(15%); }
+}
+span.mee-clip > img.peek_up {
+  animation: mee-peek-v2 2.4s ease-in-out infinite;
+  max-width: 100% !important;
+  max-height: 200px !important;
+  object-fit: fill !important;
+}
+
+/* v0.2.2 image FX: the script wraps the picture in span.mee-fx and adds overlay layers (span.mee-ov) */
+span.mee-fx{position:relative;display:inline-block;vertical-align:middle;line-height:0;max-width:100%}
+span.mee-fx>.mee-ov{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:hidden}
+span.mee-fx>.mee-ov>img{display:block;width:100%;height:100%;max-width:none!important;max-height:none!important}
+span.mee-fx>.mee-ov.mee-sp{background:#000;pointer-events:auto;cursor:pointer}
+span.mee-fx>.mee-ov.mee-sp>.mee-sp-bar{position:absolute;left:-25%;width:150%;top:50%;transform:translateY(-50%) rotate(-24deg);background:#d00;color:#fff;font:bold 14px/1.6 Arial,sans-serif;letter-spacing:.18em;text-align:center;border-top:2px solid #700;border-bottom:2px solid #700;text-shadow:0 1px 0 #600}
+span.mee-fx.mee-open>.mee-ov.mee-sp{display:none}
+span.mee-fx>.mee-ov.mee-jail{background:linear-gradient(180deg,#1c1c1c 0,#8a8a8a 3%,#1c1c1c 6%,transparent 6%,transparent 94%,#1c1c1c 94%,#8a8a8a 97%,#1c1c1c 100%),repeating-linear-gradient(90deg,transparent 0,transparent 14%,#1c1c1c 14%,#8a8a8a 16%,#d8d8d8 17%,#8a8a8a 18%,#1c1c1c 20%),rgba(0,0,0,.12)}
+span.mee-fx.mee-fx-ree{animation:mee-shake .25s linear infinite}
+span.mee-fx>.mee-ov.mee-ree-red{background:#f00;animation:mee-ree-pulse .7s ease-in-out infinite alternate}
+span.mee-fx>.mee-ov.mee-ree-nuke{background:#000;opacity:0;animation:mee-ree-nuke 10s linear infinite}
+span.mee-fx>.mee-ov.mee-ree-black{background:#000;opacity:0;animation:mee-ree-black 10s linear infinite}
+@keyframes mee-ree-pulse{0%{opacity:.1}100%{opacity:.6}}
+@keyframes mee-ree-nuke{0%,46%{opacity:0}58%,70%{opacity:1}76%,100%{opacity:0}}
+@keyframes mee-ree-black{0%,66%{opacity:0}74%,92%{opacity:1}100%{opacity:0}}
+/* cop (v0.2.2): the PICTURE ITSELF is tinted/glowed with a filter (so transparent areas stay transparent), in a
+   light-bar pattern: red double-flash, pause, blue double-flash, pause. Two 🚨 lamps (red / blue) flash in step. */
+span.mee-fx.mee-fx-cop{margin-top:1rem}
+span.mee-fx.mee-fx-cop>img,span.mee-fx.mee-fx-cop>span.mee-clip{animation:mee-cop-img 1.2s steps(1,end) infinite}
+@keyframes mee-cop-img{0%{filter:grayscale(1) brightness(.5) sepia(1) saturate(8) hue-rotate(-35deg) drop-shadow(0 0 6px #f00)}7%{filter:brightness(.85)}14%{filter:grayscale(1) brightness(.5) sepia(1) saturate(8) hue-rotate(-35deg) drop-shadow(0 0 6px #f00)}21%{filter:brightness(.85)}50%{filter:grayscale(1) brightness(.5) sepia(1) saturate(8) hue-rotate(200deg) drop-shadow(0 0 6px #08f)}57%{filter:brightness(.85)}64%{filter:grayscale(1) brightness(.5) sepia(1) saturate(8) hue-rotate(200deg) drop-shadow(0 0 6px #08f)}71%,100%{filter:brightness(.85)}}
+span.mee-fx>.mee-cop-siren{position:absolute;left:50%;top:0;transform:translate(-50%,-45%);font-size:1.7rem;line-height:1;z-index:2;pointer-events:none}
+span.mee-fx>.mee-cop-siren.r{filter:drop-shadow(0 0 5px #f00);animation:mee-cop-r 1.2s steps(1,end) infinite}
+span.mee-fx>.mee-cop-siren.b{filter:hue-rotate(220deg) brightness(1.15) drop-shadow(0 0 5px #08f);animation:mee-cop-b 1.2s steps(1,end) infinite}
+@keyframes mee-cop-r{0%{opacity:1}7%{opacity:.25}14%{opacity:1}21%{opacity:.25}50%,100%{opacity:0}}
+@keyframes mee-cop-b{0%{opacity:0}50%{opacity:1}57%{opacity:.25}64%{opacity:1}71%,100%{opacity:.25}}
+span.mee-fx>.mee-ov.mee-hap{background:#f00;animation:mee-hap 2.6s ease-in-out infinite}
+@keyframes mee-hap{0%,100%{opacity:0}50%{opacity:.55}}
+span.mee-fx>.mee-ov.mee-braz{top:auto;bottom:0;height:30%}
+span.mee-fx>.mee-ov.mee-v>svg{display:block;width:100%;height:100%}
+span.mee-fx>.mee-ov.mee-msk{pointer-events:auto;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+span.mee-fx.mee-fx-msk img{-webkit-user-drag:none;user-select:none}
+
+/* Video link preview button (added by the script after direct video links) */
+.mee-vid-btn { cursor: pointer; margin-left: .3em; user-select: none; -webkit-user-select: none; }
+.mee-vid-btn:hover { filter: brightness(1.3); }
+
+/* /sr /sl marquee — full messagebuffer width */
+#messagebuffer .mee-scroll-right,
+#messagebuffer .mee-scroll-right-fast,
+#messagebuffer .mee-scroll-right-hyper,
+#messagebuffer .mee-scroll-left,
+#messagebuffer .mee-scroll-left-fast,
+#messagebuffer .mee-scroll-left-hyper {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  container-type: inline-size;
+}
+@keyframes mee-marquee-right {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100cqw); }
+}
+@keyframes mee-marquee-left {
+  0%   { transform: translateX(100cqw); }
+  100% { transform: translateX(-100%); }
+}
+@supports not (width: 1cqw) {
+  @keyframes mee-marquee-right {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  @keyframes mee-marquee-left {
+    0%   { transform: translateX(100%); }
+    100% { transform: translateX(-100%); }
+  }
+}
+#messagebuffer .mee-scroll-right .mee-scroll-inner,
+#messagebuffer .mee-scroll-right-fast .mee-scroll-inner,
+#messagebuffer .mee-scroll-right-hyper .mee-scroll-inner {
+  display: inline-block;
+  animation: mee-marquee-right 8s linear infinite;
+  vertical-align: middle;
+}
+#messagebuffer .mee-scroll-right-fast .mee-scroll-inner { animation-duration: 4s; }
+#messagebuffer .mee-scroll-right-hyper .mee-scroll-inner { animation-duration: 1.5s; }
+#messagebuffer .mee-scroll-left .mee-scroll-inner,
+#messagebuffer .mee-scroll-left-fast .mee-scroll-inner,
+#messagebuffer .mee-scroll-left-hyper .mee-scroll-inner {
+  display: inline-block;
+  animation: mee-marquee-left 8s linear infinite;
+  vertical-align: middle;
+}
+#messagebuffer .mee-scroll-left-fast .mee-scroll-inner { animation-duration: 4s; }
+#messagebuffer .mee-scroll-left-hyper .mee-scroll-inner { animation-duration: 1.5s; }
+
+.dankestMeme {
+  font-weight: 700;
+  animation: mee-rainbow 0.3s alternate infinite;
+}
+@keyframes mee-rainbow {
+  0%   { color: #009; }
+  25%  { color: #090; }
+  50%  { color: #F60; }
+  75%  { color: #906; }
+  100% { color: #009; }
+}
+
+/* /in — Nintendo pill / race-stripe capsule */
+.hig-nintendo {
+  display: inline-block;
+  font-family: "Press Start 2P", monospace !important;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #fff !important;
+  background: #e60012;
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px #e60012, 2px 2px 0 #000;
+}
+
+/* /sega — real NiseSega face (channel cut is in the glyphs) */
+.sega-font {
+  display: inline-block;
+  font-family: "NiseSega", "Russo One", Impact, sans-serif !important;
+  font-size: 1.5em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.15;
+  color: #1a8cff !important;
+  background: none;
+  -webkit-text-fill-color: unset;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  filter: none;
+  text-shadow:
+    0 1px 0 #001a44,
+    0 0 6px rgba(0, 140, 255, 0.35);
+}
+
+/* /troma — Creepster (Google Fonts) in slime green */
+.troma-font {
+  font-family: "Creepster", Chiller, Impact, fantasy !important;
+  font-size: 2.1em;
+  letter-spacing: 0.05em;
+  color: #86e01a !important;
+  text-shadow: 0 2px 0 #2c5a00, 0 0 8px rgba(134, 224, 26, 0.55);
+}
+
+.spoiler { background: #000; color: #000; cursor: pointer; }
+.spoiler:hover { color: inherit; }
+.highlight-hooves { background: #620; color: #ffa; font-weight: 700; padding: 0 4px; }
+.highlight-plot   { background: #406; color: #fdf; font-weight: 700; padding: 0 4px; }
+.speakith { color: #f44; font-size: 1.25em; font-weight: 700; }
+
+.channel-image, img.channel-emote {
+  vertical-align: middle;
+  max-height: 200px;
+  max-width: 100%;
+}
+img.mee-pic { max-height: 80px !important; max-width: 120px !important; }
+img.mee-mid { max-height: 160px !important; max-width: 240px !important; }
+img.mee-big { max-height: 280px !important; max-width: 400px !important; }
+img.mee-ant { max-height: 24px !important; max-width: 40px !important; }
+img.mee-yuge { max-height: 480px !important; max-width: 100% !important; }
